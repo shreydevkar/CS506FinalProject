@@ -15,13 +15,15 @@ def evaluate_model(model, X, y):
     }
 
 
-def baseline_model(df):
-    # naive baseline: RV_t+1 = RV_t
-    baseline_preds = df["RV"].shift(0)
-    actual = df["Target"]
+def baseline_model(df, split_idx, test_len):
+    # IMPORTANT: Calculate baseline only on test set for fair comparison
+    # Baseline predicts RV_t+1 = RV_t (volatility persistence assumption)
+    # This naive model serves as a benchmark for ML models
+    df_clean = df.dropna()
 
-    mask = ~baseline_preds.isna() & ~actual.isna()
+    baseline_preds = df_clean["RV"].iloc[split_idx : split_idx + test_len]
+    actual = df_clean["Target"].iloc[split_idx : split_idx + test_len]
 
-    mse = mean_squared_error(actual[mask], baseline_preds[mask])
+    mse = mean_squared_error(actual, baseline_preds)
 
     return mse

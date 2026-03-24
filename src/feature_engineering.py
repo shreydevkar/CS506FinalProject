@@ -27,7 +27,7 @@ def add_features(df):
     return df
 
 
-def prepare_data(df):
+def prepare_data(df, test_size=0.2):
     df = df.dropna()
 
     features = [
@@ -42,4 +42,13 @@ def prepare_data(df):
     X = df[features]
     y = df["Target"]
 
-    return X, y
+    # IMPORTANT: Time series split to prevent data leakage
+    # Use chronological split: train on past data, test on future data
+    # This ensures realistic evaluation of predictive models
+    split_idx = int(len(X) * (1 - test_size))
+    X_train = X.iloc[:split_idx]
+    X_test = X.iloc[split_idx:]
+    y_train = y.iloc[:split_idx]
+    y_test = y.iloc[split_idx:]
+
+    return X_train, X_test, y_train, y_test
