@@ -19,3 +19,5 @@ def train_xgboost(X, y):
     model = xgb.XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1)
     model.fit(X, y)
     return model
+
+    #ask eric for the alternative 
