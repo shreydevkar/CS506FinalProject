@@ -31,7 +31,16 @@ NEW_CELLS = [
 
 This section compares model performance with and without news-sentiment features.
 
-**Data constraint**: NewsAPI's free tier returns roughly the last 30 days of headlines, so sentiment features are populated only for the most recent ~month of the price series. Earlier dates receive neutral sentiment (mean=0, std=0, news_count=0). This limits the signal available to the models but the framework is correct and will scale to a longer-history sentiment source.
+**Data sources used**:
+- Market data: yfinance, 2013-01-01 to 2018-01-01 (5 years of daily bars).
+- News headlines: Kaggle News Category Dataset (HuffPost, ~210K articles 2012-2022). Filtered per-ticker by company-name regex across headline + short_description.
+
+**Coverage per ticker** (days with at least one headline, out of ~1260 trading days):
+- AAPL: ~499 days (~40% coverage) — densest signal.
+- TSLA: ~109 days (~9%).
+- NKE: ~52 days (~4%).
+
+Sentiment features per trading day: `sentiment_mean`, `sentiment_std`, `news_count`, plus 5-day rolling aggregates (`sentiment_mean_5d`, `news_count_5d`) to densify the signal for tree models.
 """),
     code(f"""{SENTINEL}
 import sys
@@ -40,9 +49,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-from main import run_comparison
+from main import run_comparison, run_pipeline
 
-TICKER = 'TSLA'
+# AAPL picked as the showcase because it has the densest news coverage (~40% of trading days).
+TICKER = 'AAPL'
 results = run_comparison(TICKER)
 """),
     code(f"""{SENTINEL}
@@ -99,6 +109,26 @@ plt.tight_layout()
 plt.show()
 """),
     code(f"""{SENTINEL}
+# Cross-ticker summary: run the pipeline for all three tickers, both variants.
+# Shows where sentiment helps and where data sparsity makes it ineffective.
+all_rows = []
+for t in ['AAPL', 'TSLA', 'NKE']:
+    for variant, use_sent in [('without sentiment', False), ('with sentiment', True)]:
+        r = run_pipeline(t, use_sentiment=use_sent)
+        for m, label in [('lr', 'Linear Regression'), ('rf', 'Random Forest'), ('xgb', 'XGBoost')]:
+            all_rows.append({{
+                'ticker': t, 'variant': variant, 'model': label,
+                'MSE': r['eval'][m]['MSE'], 'MAE': r['eval'][m]['MAE'], 'R2': r['eval'][m]['R2'],
+                'baseline_MSE': r['eval']['baseline_mse'],
+            }})
+cross = pd.DataFrame(all_rows)
+cross.to_csv('results_all_tickers.csv', index=False)
+# Pivot to show MSE side-by-side
+pivot = cross.pivot_table(index=['ticker','model'], columns='variant', values='MSE')
+pivot['delta %'] = 100.0 * (pivot['with sentiment'] - pivot['without sentiment']) / pivot['without sentiment']
+pivot
+"""),
+    code(f"""{SENTINEL}
 # Predictions overlay for the best sentiment-model on the test set
 best_name = comp[comp['variant'] == 'with sentiment'].sort_values('MSE').iloc[0]['model']
 best_key = {{'Linear Regression': 'lr', 'Random Forest': 'rf', 'XGBoost': 'xgb',
@@ -121,7 +151,7 @@ if best_key is not None:
 
 
 def main():
-    nb = json.loads(NB_PATH.read_text())
+    nb = json.loads(NB_PATH.read_text(encoding="utf-8"))
     # Strip any previously-appended sentinel cells to stay idempotent
     kept = []
     for cell in nb["cells"]:
@@ -130,7 +160,7 @@ def main():
             continue
         kept.append(cell)
     nb["cells"] = kept + NEW_CELLS
-    NB_PATH.write_text(json.dumps(nb, indent=1))
+    NB_PATH.write_text(json.dumps(nb, indent=1), encoding="utf-8")
     print(f"Appended {len(NEW_CELLS)} sentiment-comparison cells to {NB_PATH.name}")
 
 

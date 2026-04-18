@@ -8,6 +8,8 @@ Sentiment: VADER compound score per headline, aggregated per trading day into
 (sentiment_mean, sentiment_std, news_count).
 """
 import os
+import re
+import json
 import time
 from datetime import datetime, timedelta
 
@@ -20,7 +22,11 @@ from nltk.sentiment.vader import SentimentIntensityAnalyzer
 load_dotenv()
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
-CACHE_DIR = "data/raw"
+# Anchor data path at the project root so calls work regardless of CWD
+# (e.g. the notebook runs from notebooks/ but the data lives at <root>/data/raw/).
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CACHE_DIR = os.path.join(_PROJECT_ROOT, "data", "raw")
+KAGGLE_JSON_PATH = os.path.join(CACHE_DIR, "news_category_dataset.json")
 
 TICKER_QUERY = {
     "AAPL": "Apple",
@@ -31,6 +37,20 @@ TICKER_QUERY = {
     "AMZN": "Amazon",
     "META": "Meta OR Facebook",
     "NVDA": "Nvidia",
+}
+
+# Keyword patterns used to match Kaggle HuffPost headlines to a specific stock.
+# Broad enough to catch mentions by product or executive name, narrow enough to
+# avoid ambiguous matches (e.g. "apple" as fruit is usually capitalized in headlines).
+TICKER_KEYWORDS = {
+    "AAPL": re.compile(r"\b(Apple|iPhone|iPad|MacBook|Tim Cook|App Store|Apple Inc)\b", re.I),
+    "TSLA": re.compile(r"\b(Tesla|Elon Musk|Model [SX3Y]|Cybertruck|SpaceX)\b", re.I),
+    "NKE":  re.compile(r"\b(Nike|Air Jordan|Swoosh|Phil Knight|Nike Inc)\b", re.I),
+    "MSFT": re.compile(r"\b(Microsoft|Satya Nadella|Windows|Azure|Xbox)\b", re.I),
+    "GOOGL": re.compile(r"\b(Google|Sundar Pichai|Alphabet|YouTube|Android)\b", re.I),
+    "AMZN": re.compile(r"\b(Amazon|Jeff Bezos|Andy Jassy|AWS|Whole Foods)\b", re.I),
+    "META": re.compile(r"\b(Facebook|Meta|Mark Zuckerberg|Instagram|WhatsApp)\b", re.I),
+    "NVDA": re.compile(r"\b(Nvidia|Jensen Huang|GeForce|CUDA)\b", re.I),
 }
 
 
@@ -129,25 +149,73 @@ def save_news_cache(df, ticker):
     df.to_csv(_cache_path(ticker), index=False)
 
 
-def get_or_fetch_headlines(ticker, use_cache=True, days_back=30):
+def load_kaggle_news(ticker, json_path=None):
+    """Filter the Kaggle News Category dataset for headlines mentioning this ticker.
+
+    The dataset is ~210K HuffPost articles from 2012-2022. We match by company-name
+    regex against headline+short_description. Returns the same schema as the other
+    fetchers: date/title/description/source.
+    """
+    path = json_path or KAGGLE_JSON_PATH
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Kaggle dataset not found at {path}. "
+            f"Download News_Category_Dataset_v3.json from "
+            f"https://www.kaggle.com/datasets/rmisra/news-category-dataset "
+            f"and place it there."
+        )
+    pat = TICKER_KEYWORDS.get(ticker)
+    if pat is None:
+        raise ValueError(f"No keyword pattern defined for ticker {ticker}")
+
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            r = json.loads(line)
+            text = (r.get("headline") or "") + " " + (r.get("short_description") or "")
+            if not pat.search(text):
+                continue
+            rows.append({
+                "date": pd.to_datetime(r["date"]).normalize(),
+                "title": (r.get("headline") or "").strip(),
+                "description": (r.get("short_description") or "").strip(),
+                "source": "HuffPost",
+            })
+    return pd.DataFrame(rows)
+
+
+def get_or_fetch_headlines(ticker, source="kaggle", use_cache=True, days_back=30):
     """Return headlines DataFrame. Reads cache if present; else fetches and caches.
 
-    Tries NewsAPI first, falls back to yfinance if that fails.
+    source: "kaggle" (Kaggle HuffPost dataset, 2012-2022, broad historical coverage),
+            "newsapi" (NewsAPI, last 30 days only on free tier),
+            "both" (union of both sources, deduped on title+date).
     """
-    if use_cache:
-        cached = load_news_cache(ticker)
-        if cached is not None and len(cached) > 0:
-            return cached
+    cache_key = ticker if source == "newsapi" else f"{ticker}_{source}"
+    cache_path = os.path.join(CACHE_DIR, f"news_headlines_{cache_key}.csv")
 
-    try:
-        df = fetch_news_newsapi(ticker, days_back=days_back)
-        if len(df) == 0:
-            raise RuntimeError("NewsAPI returned 0 articles")
-    except Exception as e:
-        print(f"[news_sentiment] NewsAPI failed ({e}); falling back to yfinance")
-        df = fetch_news_yfinance(ticker)
+    if use_cache and os.path.exists(cache_path):
+        return pd.read_csv(cache_path, parse_dates=["date"])
 
-    save_news_cache(df, ticker)
+    frames = []
+    if source in ("kaggle", "both"):
+        frames.append(load_kaggle_news(ticker))
+    if source in ("newsapi", "both"):
+        try:
+            df = fetch_news_newsapi(ticker, days_back=days_back)
+            if len(df) == 0:
+                raise RuntimeError("NewsAPI returned 0 articles")
+            frames.append(df)
+        except Exception as e:
+            print(f"[news_sentiment] NewsAPI failed ({e}); falling back to yfinance")
+            frames.append(fetch_news_yfinance(ticker))
+
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if len(df) > 0:
+        df = df.drop_duplicates(subset=["date", "title"]).reset_index(drop=True)
+
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    df.to_csv(cache_path, index=False)
     return df
 
 
@@ -197,8 +265,12 @@ def aggregate_daily_sentiment(scored_df):
     return agg
 
 
-def build_sentiment_features(ticker, use_cache=True, days_back=30):
-    """End-to-end: fetch/load headlines → score → aggregate daily. Returns daily sentiment DF."""
-    headlines = get_or_fetch_headlines(ticker, use_cache=use_cache, days_back=days_back)
+def build_sentiment_features(ticker, source="kaggle", use_cache=True, days_back=30):
+    """End-to-end: fetch/load headlines → score → aggregate daily. Returns daily sentiment DF.
+
+    Default source="kaggle" because it has historical depth (2012-2022). Use "newsapi"
+    for recent ~30 days, or "both" to union.
+    """
+    headlines = get_or_fetch_headlines(ticker, source=source, use_cache=use_cache, days_back=days_back)
     scored = compute_vader_sentiment(headlines)
     return aggregate_daily_sentiment(scored)

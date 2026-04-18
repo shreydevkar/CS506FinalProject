@@ -14,6 +14,8 @@ SENTIMENT_FEATURES = [
     "sentiment_mean",
     "sentiment_std",
     "news_count",
+    "sentiment_mean_5d",
+    "news_count_5d",
 ]
 
 
@@ -57,6 +59,11 @@ def add_features(df, sentiment_df=None):
         df[["sentiment_mean", "sentiment_std", "news_count"]] = (
             df[["sentiment_mean", "sentiment_std", "news_count"]].fillna(0.0)
         )
+        # Rolling 5-day aggregates: densify the signal so tree models see gradients
+        # instead of a sparse mostly-zero column (news on any day in the last week
+        # influences today's prediction).
+        df["sentiment_mean_5d"] = df["sentiment_mean"].rolling(5, min_periods=1).mean()
+        df["news_count_5d"] = df["news_count"].rolling(5, min_periods=1).sum()
 
     # Target: tomorrow's RV (what we predict). Computed LAST so no merged column can leak into it.
     df["Target"] = df["RV"].shift(-1)
