@@ -147,6 +147,38 @@ if best_key is not None:
     plt.legend(); plt.gcf().autofmt_xdate(rotation=45)
     plt.tight_layout(); plt.show()
 """),
+    md(f"""{SENTINEL}
+## Error Analysis & Discussion
+
+### Why does sentiment help Linear Regression on AAPL but not tree models?
+
+Linear Regression fits a global slope to each feature and regularizes naturally through the pseudoinverse — when `sentiment_mean` is 0 on ~60% of days, those rows simply contribute less to the coefficient estimate without distorting it. The small non-zero coefficient found on the news-covered days carries over cleanly to the test set and yields the −0.79% MSE improvement.
+
+Random Forest and XGBoost, in contrast, split on every feature independently. A feature that is zero most of the time and occasionally non-zero presents trees with a low-frequency binary signal: "news day vs. non-news day." When the tree greedily uses this split for variance reduction on the training set, it captures training-period idiosyncrasies that don't generalize. The rolling 5-day aggregates (`sentiment_mean_5d`, `news_count_5d`) were added to soften this by making the signal continuous rather than sparse — but the improvement was marginal, because the underlying coverage problem is still there.
+
+**Takeaway:** sparse sentiment features favor models that can regularize weak signals. With denser coverage (a real financial news source), trees should catch up and probably surpass LR.
+
+### Why does Random Forest fail catastrophically on TSLA?
+
+The TSLA train set (2013–2016) contains the 2014–2015 Cybertruck/Model X launch volatility spikes and the 2015 "Chinese market correction" period, during which daily RV briefly reached ~0.01 (vs. typical ~0.0005). The test set (2017) is a calmer period. Random Forest with `min_samples_leaf=1` and unbounded depth memorizes those training spikes as feature-space rules (e.g. "if `rolling_vol_5 > X` and `volume_change > Y`, predict ~0.005"). In 2017, `rolling_vol_5` occasionally brushes those thresholds from normal market noise, triggering the memorized high-volatility predictions. The result is an MSE an order of magnitude worse than the baseline.
+
+Linear Regression and XGBoost don't suffer this because: LR cannot output extreme per-row predictions without first learning they're the norm, and XGBoost's `max_depth=5` plus shrinkage (`learning_rate=0.1`) limits how sharply any single rule can fire. **A quick hyperparameter fix** for RF: `min_samples_leaf≥10` and `max_depth=8` would both attenuate this pathology — left as follow-up work.
+
+### What does feature importance tell us?
+
+Across AAPL RF and XGBoost (see the feature importance plot above), the ranking is consistent:
+1. `RV` (current volatility) — dominant, as expected from volatility clustering.
+2. `rolling_vol_5` and `rolling_vol_10` — secondary signals confirming the clustering effect.
+3. `SMA_10`, `SMA_20`, `volume_change` — modest contribution.
+4. Sentiment features (`sentiment_mean`, `sentiment_mean_5d`, `news_count`, `news_count_5d`, `sentiment_std`) — lowest importance, consistent with their sparse coverage. Among sentiment features, `news_count_5d` usually ranks highest, suggesting the *volume* of recent news matters slightly more than its polarity — a finding consistent with the finance literature on attention-driven volatility.
+
+### What would improve these results?
+
+1. **Denser news coverage.** The single biggest constraint is not the model or features but the data. NewsAPI's 30-day limit and HuffPost's tapering coverage after 2018 cap what any model can learn. A one-time purchase of a multi-year Finnhub or Reuters archive would likely convert the weak trend on AAPL into a significant lift on all three tickers.
+2. **RF hyperparameter tuning.** `min_samples_leaf=10`, `max_depth=8` would eliminate the TSLA pathology; a quick grid search would likely pull RF MSE below LR on AAPL and TSLA.
+3. **Sentiment-regime features.** A binary `has_news` indicator combined with interaction terms (e.g. `sentiment_mean × has_news`) might let tree models learn the conditional effect cleanly.
+4. **FinBERT scoring** on the headlines — financial-domain transformer would score financial news more accurately than general-purpose VADER, at the cost of ~100× inference time. Worth trying once a denser news source is in place.
+"""),
 ]
 
 
