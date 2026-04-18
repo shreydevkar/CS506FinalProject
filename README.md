@@ -122,32 +122,28 @@ All machine learning models will be evaluated relative to this baseline, and imp
   - Open, High, Low, Close prices  
   - Adjusted Close prices  
   - Volume  
-  - At least 2 years of historical daily data  
+  - **Window used:** 2013-01-01 to 2018-01-01 (5 years of daily bars). The window was chosen to overlap with the Kaggle News Category Dataset's strong coverage period — HuffPost's article count dropped ~95% after 2018, making the 2013–2017 range the densest source of sentiment signal.
 
 - **Method:**  
-  API-based data retrieval using Python scripts. Data will be stored locally in structured CSV format. Collection will be reproducible via a Makefile command.
+  API-based data retrieval via `yfinance`. Data is cached to `data/raw/{ticker}.csv` and reloaded on subsequent runs. Reproducible via `make run` or `python main.py --ticker <SYMBOL>`.
 
 
 
 ### 5.2 News Data
 
-- **Source Options:**  
-  - NewsAPI — https://newsapi.org/  
-  - Yahoo Finance News Feed — https://finance.yahoo.com/  
-  - Financial RSS feeds (e.g., Reuters or Bloomberg if accessible)  
+Two sources are wired via `src/news_sentiment.py`, switchable per call:
 
-- **Data Collected:**  
-  - Headline text  
-  - Publication timestamp  
-  - Associated stock ticker (if available)  
+- **Primary: Kaggle News Category Dataset** (https://www.kaggle.com/datasets/rmisra/news-category-dataset)  
+  210K HuffPost articles spanning 2012–2022. Downloaded once and cached at `data/raw/news_category_dataset.json` (gitignored, ~87 MB). Headlines are filtered per-ticker by a company-name regex (e.g. AAPL matches `Apple|iPhone|iPad|MacBook|Tim Cook|App Store`).  
+  *Coverage in the 2013–2018 window*: AAPL ~499 days, TSLA ~109 days, NKE ~52 days of real signal (rest of trading days receive neutral 0s).
 
-- **Method:**  
-  API requests or structured scraping. Headlines will be grouped by trading day. Sentiment scores will be computed using:
+- **Supplemental: NewsAPI** (https://newsapi.org/) — fetched day-by-day via the `/v2/everything` endpoint. Free tier gives ~30 days of history, so it fills the *recent* end of a live deployment but does not cover the 2013–2018 training window. Yahoo Finance `Ticker.news` is also implemented as a no-key fallback.
 
-  - VADER (NLTK sentiment analyzer)  
-  - FinBERT (financial-domain transformer model)  
+- **Sentiment scoring:** VADER (NLTK) compound score on `title + short_description`. FinBERT was considered but not integrated — VADER is fast enough to score all headlines in one pass and the marginal benefit of FinBERT would be dominated by the coverage limitation.
 
-  Daily aggregated sentiment metrics (mean sentiment, article count, sentiment dispersion) will be created.
+- **Daily aggregates** per trading day:
+  - `sentiment_mean`, `sentiment_std`, `news_count` (point-in-time)
+  - `sentiment_mean_5d`, `news_count_5d` (5-day rolling — densifies the signal for tree models by giving non-zero values on days adjacent to a news event)
 
 
 
@@ -163,20 +159,20 @@ This list will be used to select representative stocks for analysis.
 
 ### 5.4 Data Integration
 
-Market data and sentiment data will be merged on a daily time index. Care will be taken to:
+Market data and sentiment data are merged on the daily date index inside `feature_engineering.add_features()`. Concretely:
 
-- Avoid forward-looking bias  
-- Ensure proper time alignment (no future information leakage)  
-- Handle missing data appropriately  
+- Sentiment columns are merged **before** `Target = RV.shift(-1)` is computed, so tomorrow's sentiment cannot leak into today's prediction.
+- Days without any headline receive neutral sentiment (`sentiment_mean = 0`, `sentiment_std = 0`, `news_count = 0`) rather than being dropped — this preserves the full market time series.
+- Train/test split is strictly chronological (first 80% train, last 20% test) to prevent lookahead bias.
 
 
 
 ## 6. Project Timeline (8 Weeks)
 
-- **Weeks 1–2:** Repository setup, market data collection pipeline, initial news data collection, and exploratory analysis  
-- **Weeks 3–4:** Data cleaning, technical indicator computation, sentiment scoring pipeline implementation, dataset merging, and preliminary visualizations  
-- **Weeks 5–6:** Baseline model implementation, training of Linear Regression, Random Forest, and Gradient Boosting models, and performance evaluation  
-- **Week 7:** Feature importance analysis, error analysis, and model refinement  
+- ~~**Weeks 1–2:** Repository setup, market data collection pipeline, initial news data collection, and exploratory analysis~~ *(complete)*
+- ~~**Weeks 3–4:** Data cleaning, technical indicator computation, sentiment scoring pipeline implementation, dataset merging, and preliminary visualizations~~ *(complete)*
+- ~~**Weeks 5–6:** Baseline model implementation, training of Linear Regression, Random Forest, and Gradient Boosting models, and performance evaluation~~ *(complete)*
+- **Week 7 (current):** Feature importance analysis, error analysis, and model refinement
 - **Week 8:** Final visualizations, README completion, testing and GitHub workflow setup, and presentation recording  
 
 
@@ -210,7 +206,51 @@ This avoids restarting the project mid-semester while preserving analytical dept
 
 
 
-## 9. Alternative / Backup Project Idea: FitRec Gym Occupancy Prediction
+## 9. Usage
+
+### Install
+
+```bash
+make install              # installs from requirements.txt
+```
+
+First-time setup for sentiment features:
+
+1. Download `News_Category_Dataset_v3.json` from https://www.kaggle.com/datasets/rmisra/news-category-dataset and place it at `data/raw/news_category_dataset.json` (the file is gitignored).
+2. *(Optional)* For live NewsAPI fetches, create `.env` at the project root containing `NEWSAPI_KEY=<your key>`.
+
+### Run
+
+```bash
+make run                                   # default ticker AAPL, market-only
+python main.py --ticker AAPL               # same, explicit
+python main.py --ticker TSLA --use-sentiment
+python main.py --ticker AAPL --compare     # run both variants and print a side-by-side
+```
+
+The notebook `notebooks/preliminary_visualizations.ipynb` re-runs the pipeline for the showcase ticker and produces the comparison table, bar charts, feature-importance plots, and best-model overlay. Results CSVs are written to `notebooks/results.csv` (showcase) and `notebooks/results_all_tickers.csv` (cross-ticker).
+
+
+
+## 10. Current Results (Week 7 Check-in)
+
+Test-set MSE on the 2013–2018 window (lower is better, persistence baseline is the target to beat):
+
+| Ticker | Baseline MSE | LR no sent. | LR + sent. | RF no sent. | XGB no sent. |
+|---|---|---|---|---|---|
+| **AAPL** | 2.03e-07 | 1.13e-07 | **1.12e-07** | 1.13e-07 | 1.09e-07 |
+| **TSLA** | 1.33e-06 | 1.02e-06 | 1.04e-06 | 1.66e-05 *(overfit)* | 2.51e-06 |
+| **NKE**  | 1.21e-06 | 6.02e-07 | 6.02e-07 | 6.59e-07 | 6.73e-07 |
+
+Findings:
+- All three ML models **beat the persistence baseline on AAPL and NKE**; Linear Regression beats it on TSLA.
+- Sentiment gives AAPL Linear Regression a further **−0.79% MSE** on top of the market-only model. AAPL has by far the densest headline coverage (~499 days / ~40% of trading days), which explains why it's the only ticker where sentiment moves the needle meaningfully.
+- Tree models (RF, XGBoost) do not benefit from sentiment in this dataset — the sparse, mostly-zero sentiment columns create splits that overfit the training period. The RF TSLA result is an outlier caused by heavy-tailed 2014–2015 volatility spikes in the training set.
+- Honest limitation: the Kaggle dataset's historical depth is not uniform across tickers. AAPL dominates HuffPost's coverage; NKE barely appears. A denser source (Finnhub, Reuters archive, or paid NewsAPI tier) would raise TSLA and NKE into the same regime as AAPL.
+
+
+
+## 11. Alternative / Backup Project Idea: FitRec Gym Occupancy Prediction
 
 As a backup, I am considering a project focused on **predicting gym occupancy at FitRec (BU’s fitness center)**. Instead of simply analyzing when the gym is busy, the project would be predictive, analytical, and decision-oriented.
 
