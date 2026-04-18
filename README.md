@@ -98,15 +98,36 @@ Successfully predict next-day realized volatility of selected S&P 500 stocks usi
 
 ## 4. Baseline Model Definition
 
-The primary naive baseline will be a **persistence model**, defined as:
+### 4.1 Primary naive baseline — Persistence model
+
+The primary naive baseline is the **persistence model**, defined as:
 
 RV̂ₜ₊₁ = RVₜ
 
-Meaning: tomorrow’s volatility is predicted to be equal to today’s volatility.
+Meaning: tomorrow's volatility is predicted to be equal to today's volatility. Volatility exhibits strong day-over-day persistence, so this is a non-trivial benchmark to beat.
 
-This is a strong and widely used financial benchmark because volatility exhibits persistence over time.
+All machine learning models are evaluated relative to this baseline, and improvement is reported as percentage reduction in MSE compared to the naive model.
 
-All machine learning models will be evaluated relative to this baseline, and improvement will be reported as percentage reduction in MSE compared to the naive model.
+### 4.2 Secondary econometric baseline — GARCH(1,1)
+
+**Originally** this project compared only against the persistence baseline. The rationale has been strengthened to also include a **GARCH(1,1)** benchmark alongside persistence, for the reasons below.
+
+**What GARCH(1,1) is:** the classical financial econometrics model for volatility (Bollerslev, 1986), parameterized as
+
+σ²ₜ = ω + α·r²ₜ₋₁ + β·σ²ₜ₋₁
+
+with three parameters (ω, α, β) fit on the returns series. It explicitly models the two stylized facts of financial volatility: **clustering** (past shocks predict current variance, captured by α) and **mean reversion** (variance drifts toward a long-run level, captured by β).
+
+**Why persistence alone wasn't enough:**
+1. Persistence is a *trivial* benchmark — it literally says "tomorrow = today" and has zero parameters. Beating it by 40–50% sounds impressive but is the expected baseline in any volatility paper.
+2. The field's standard benchmark is GARCH, not persistence. A class project that only beats persistence could be dismissed as "didn't compare against the real benchmark."
+3. GARCH is free to compute (3 params, seconds to fit) and widely available via the `arch` Python library.
+
+**What adding GARCH revealed:** GARCH(1,1) beats the tuned ML ensemble on TSLA (the most volatile ticker) — 7.18e-07 vs. 8.03e-07. This is an honest and interesting finding: for heavy-tailed volatility regimes with pronounced mean reversion, the 3-parameter econometric prior still outperforms a Random Forest tuned on the same data. On AAPL and NKE the ML models win, but only by a few percent over GARCH rather than by the 40–50% they win over persistence.
+
+**Takeaway:** the persistence baseline shows ML is doing something; the GARCH baseline shows *how much* of that something is just "rediscovering volatility clustering" versus contributing additional signal. Keeping both makes the comparison defensible.
+
+Implementation lives in `src/garch_baseline.py` — rolling 1-step-ahead forecasts with a refit every 20 test days.
 
 
 
