@@ -8,6 +8,7 @@ BASE_FEATURES = [
     "SMA_10",
     "SMA_20",
     "volume_change",
+    "RSI_14",
 ]
 
 SENTIMENT_FEATURES = [
@@ -44,6 +45,16 @@ def add_features(df, sentiment_df=None):
 
     # Volume change: volume spikes often precede volatility spikes
     df["volume_change"] = df["Volume"].pct_change()
+
+    # RSI (14-day): momentum oscillator in [0, 100]. Values <30 indicate oversold
+    # (volatility often spikes as buyers return), >70 overbought (reversal risk).
+    # Uses Wilder's smoothing (exponential with alpha = 1/period) which is standard.
+    delta = df["Close"].diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df["RSI_14"] = 100 - (100 / (1 + rs))
+    df["RSI_14"] = df["RSI_14"].fillna(50.0)  # neutral at series start
 
     # Merge daily sentiment (before computing Target to avoid leakage from future sentiment rows)
     if sentiment_df is not None and len(sentiment_df) > 0:

@@ -5,10 +5,17 @@ from src.evaluate import evaluate_model, baseline_model
 import argparse
 
 
-def _train_and_eval(X_train, X_test, y_train, y_test):
+def _train_and_eval(X_train, X_test, y_train, y_test, tune=False):
     lr = train_linear_regression(X_train, y_train)
-    rf = train_random_forest(X_train, y_train)
-    xgb_model = train_xgboost(X_train, y_train)
+    if tune:
+        from src.tune import train_tuned
+        tuned = train_tuned(X_train, y_train)
+        rf, xgb_model = tuned["rf"], tuned["xgb"]
+        print(f"  tuned RF params:  {tuned['rf_params']}")
+        print(f"  tuned XGB params: {tuned['xgb_params']}")
+    else:
+        rf = train_random_forest(X_train, y_train)
+        xgb_model = train_xgboost(X_train, y_train)
     return {
         "models": {"lr": lr, "rf": rf, "xgb": xgb_model},
         "eval": {
@@ -19,7 +26,7 @@ def _train_and_eval(X_train, X_test, y_train, y_test):
     }
 
 
-def run_pipeline(ticker, use_sentiment=False):
+def run_pipeline(ticker, use_sentiment=False, tune=False):
     #  Step 1: Data ingestion
     df = fetch_stock_data(ticker)
 
@@ -41,7 +48,7 @@ def run_pipeline(ticker, use_sentiment=False):
     last_features = df_clean.iloc[-1:][features]
 
     #  Step 4+5: Train and evaluate
-    trained = _train_and_eval(X_train, X_test, y_train, y_test)
+    trained = _train_and_eval(X_train, X_test, y_train, y_test, tune=tune)
     lr, rf, xgb_model = trained["models"]["lr"], trained["models"]["rf"], trained["models"]["xgb"]
 
     label = "with sentiment" if use_sentiment else "baseline (no sentiment)"
@@ -85,10 +92,10 @@ def run_pipeline(ticker, use_sentiment=False):
     }
 
 
-def run_comparison(ticker):
+def run_comparison(ticker, tune=False):
     """Run pipeline twice (without and with sentiment) and return both result dicts."""
-    baseline = run_pipeline(ticker, use_sentiment=False)
-    sentiment = run_pipeline(ticker, use_sentiment=True)
+    baseline = run_pipeline(ticker, use_sentiment=False, tune=tune)
+    sentiment = run_pipeline(ticker, use_sentiment=True, tune=tune)
     return {"baseline": baseline, "sentiment": sentiment}
 
 
@@ -97,9 +104,10 @@ if __name__ == "__main__":
     parser.add_argument("--ticker", type=str, default="AAPL", help="Stock ticker symbol (default: AAPL)")
     parser.add_argument("--use-sentiment", action="store_true", help="Include news sentiment features")
     parser.add_argument("--compare", action="store_true", help="Run both variants and compare")
+    parser.add_argument("--tune", action="store_true", help="Grid-search RF/XGB hyperparameters with time-series CV (slower)")
     args = parser.parse_args()
 
     if args.compare:
         run_comparison(args.ticker)
     else:
-        run_pipeline(args.ticker, use_sentiment=args.use_sentiment)
+        run_pipeline(args.ticker, use_sentiment=args.use_sentiment, tune=args.tune)

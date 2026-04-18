@@ -27,20 +27,25 @@ def code(src):
 
 NEW_CELLS = [
     md(f"""{SENTINEL}
-# News Sentiment Comparison
+# News Sentiment Comparison (+ Tuned Models + GARCH Baseline)
 
-This section compares model performance with and without news-sentiment features.
+This section compares model performance across three axes:
+- **Without vs. with news-sentiment features**
+- **Default vs. hyperparameter-tuned** Random Forest / XGBoost
+- **ML vs. classical econometric (GARCH(1,1)) benchmark**
 
-**Data sources used**:
+**Data sources**:
 - Market data: yfinance, 2013-01-01 to 2018-01-01 (5 years of daily bars).
 - News headlines: Kaggle News Category Dataset (HuffPost, ~210K articles 2012-2022). Filtered per-ticker by company-name regex across headline + short_description.
 
-**Coverage per ticker** (days with at least one headline, out of ~1260 trading days):
-- AAPL: ~499 days (~40% coverage) — densest signal.
+**Sentiment coverage per ticker** (days with at least one headline, out of ~1260 trading days):
+- AAPL: ~499 days (~40%) — densest signal.
 - TSLA: ~109 days (~9%).
 - NKE: ~52 days (~4%).
 
-Sentiment features per trading day: `sentiment_mean`, `sentiment_std`, `news_count`, plus 5-day rolling aggregates (`sentiment_mean_5d`, `news_count_5d`) to densify the signal for tree models.
+**Technical features**: RV, rolling volatility (5 & 10-day), SMA (10 & 20), volume change, RSI(14).
+**Sentiment features**: sentiment_mean, sentiment_std, news_count, plus 5-day rolling aggregates.
+**Tuning**: per-ticker grid search over RF (n_estimators, max_depth, min_samples_leaf, max_features) and XGB (n_estimators, max_depth, learning_rate, reg_lambda) using chronological TimeSeriesSplit (4-fold expanding-window CV).
 """),
     code(f"""{SENTINEL}
 import sys
@@ -53,7 +58,7 @@ from main import run_comparison, run_pipeline
 
 # AAPL picked as the showcase because it has the densest news coverage (~40% of trading days).
 TICKER = 'AAPL'
-results = run_comparison(TICKER)
+results = run_comparison(TICKER, tune=True)
 """),
     code(f"""{SENTINEL}
 # Build a tidy comparison table
@@ -109,24 +114,29 @@ plt.tight_layout()
 plt.show()
 """),
     code(f"""{SENTINEL}
-# Cross-ticker summary: run the pipeline for all three tickers, both variants.
-# Shows where sentiment helps and where data sparsity makes it ineffective.
-all_rows = []
-for t in ['AAPL', 'TSLA', 'NKE']:
-    for variant, use_sent in [('without sentiment', False), ('with sentiment', True)]:
-        r = run_pipeline(t, use_sentiment=use_sent)
-        for m, label in [('lr', 'Linear Regression'), ('rf', 'Random Forest'), ('xgb', 'XGBoost')]:
-            all_rows.append({{
-                'ticker': t, 'variant': variant, 'model': label,
-                'MSE': r['eval'][m]['MSE'], 'MAE': r['eval'][m]['MAE'], 'R2': r['eval'][m]['R2'],
-                'baseline_MSE': r['eval']['baseline_mse'],
-            }})
-cross = pd.DataFrame(all_rows)
-cross.to_csv('results_all_tickers.csv', index=False)
-# Pivot to show MSE side-by-side
-pivot = cross.pivot_table(index=['ticker','model'], columns='variant', values='MSE')
-pivot['delta %'] = 100.0 * (pivot['with sentiment'] - pivot['without sentiment']) / pivot['without sentiment']
-pivot
+# Cross-ticker summary is precomputed in results_all_tickers.csv (see project root notebook regen).
+# Read it in for analysis and a pivoted view.
+cross = pd.read_csv('results_all_tickers.csv')
+cross
+"""),
+    code(f"""{SENTINEL}
+# Pivot: MSE by ticker × model, split by sentiment variant
+ml_rows = cross[cross['model'].isin(['Linear Regression','Random Forest (tuned)','XGBoost (tuned)'])]
+pivot_sent = ml_rows.pivot_table(index=['ticker','model'], columns='variant', values='MSE')
+pivot_sent['delta %'] = 100.0 * (pivot_sent['with sentiment'] - pivot_sent['no sentiment']) / pivot_sent['no sentiment']
+pivot_sent
+"""),
+    code(f"""{SENTINEL}
+# Best model per ticker vs GARCH vs persistence baseline
+best = ml_rows.loc[ml_rows.groupby(['ticker','variant'])['MSE'].idxmin()]
+garch = cross[cross['model']=='GARCH(1,1)']
+bline = cross[cross['model']=='Persistence baseline']
+summary = (best[['ticker','variant','model','MSE']]
+           .merge(garch[['ticker','variant','MSE']].rename(columns={{'MSE':'GARCH_MSE'}}), on=['ticker','variant'])
+           .merge(bline[['ticker','variant','MSE']].rename(columns={{'MSE':'baseline_MSE'}}), on=['ticker','variant']))
+summary['vs_baseline_%'] = 100.0 * (summary['MSE'] - summary['baseline_MSE']) / summary['baseline_MSE']
+summary['vs_garch_%']    = 100.0 * (summary['MSE'] - summary['GARCH_MSE']) / summary['GARCH_MSE']
+summary
 """),
     code(f"""{SENTINEL}
 # Predictions overlay for the best sentiment-model on the test set
@@ -150,34 +160,37 @@ if best_key is not None:
     md(f"""{SENTINEL}
 ## Error Analysis & Discussion
 
-### Why does sentiment help Linear Regression on AAPL but not tree models?
+### What hyperparameter tuning revealed
 
-Linear Regression fits a global slope to each feature and regularizes naturally through the pseudoinverse — when `sentiment_mean` is 0 on ~60% of days, those rows simply contribute less to the coefficient estimate without distorting it. The small non-zero coefficient found on the news-covered days carries over cleanly to the test set and yields the −0.79% MSE improvement.
+The earlier version of this notebook reported that **tree models were indifferent or hurt by sentiment**, and attributed it to the sparse-feature problem. Running a per-ticker 4-fold chronological-CV grid search on Random Forest (`max_depth ∈ {{5, 8, None}}`, `min_samples_leaf ∈ {{5, 10, 20}}`, plus `n_estimators` and `max_features`) and XGBoost (`max_depth ∈ {{3, 5, 8}}`, `learning_rate ∈ {{0.05, 0.1}}`, `reg_lambda ∈ {{1.0, 5.0}}`) overturned that conclusion:
 
-Random Forest and XGBoost, in contrast, split on every feature independently. A feature that is zero most of the time and occasionally non-zero presents trees with a low-frequency binary signal: "news day vs. non-news day." When the tree greedily uses this split for variance reduction on the training set, it captures training-period idiosyncrasies that don't generalize. The rolling 5-day aggregates (`sentiment_mean_5d`, `news_count_5d`) were added to soften this by making the signal continuous rather than sparse — but the improvement was marginal, because the underlying coverage problem is still there.
+- Default RF (`min_samples_leaf=1`, unbounded depth) was overfitting training-period volatility clusters, particularly on TSLA where the 2014–2015 China-correction and Model X launch periods created heavy-tailed RV spikes that don't recur in the 2017 test window. The default tree memorized those spikes as feature-space rules; tuned RF (`min_samples_leaf ∈ {{10, 20}}`, `max_depth ≤ 8`) cut TSLA MSE by **95%** (1.66e-05 → 8.03e-07).
+- Once the trees were properly regularized, sentiment features became additive rather than adversarial. The largest single win is **AAPL XGBoost with sentiment: −19.7% MSE** (1.38e-07 → 1.11e-07). Sentiment now improves tuned tree models on 5 of 6 (ticker × tree-model) combinations.
 
-**Takeaway:** sparse sentiment features favor models that can regularize weak signals. With denser coverage (a real financial news source), trees should catch up and probably surpass LR.
+**Takeaway:** the "sparse sentiment hurts trees" intuition was correct in direction but misattributed. The failure mode was unregularized trees extracting spurious splits from both volatility features and sentiment features simultaneously. Regularize the trees and sentiment helps.
 
-### Why does Random Forest fail catastrophically on TSLA?
+### Why does GARCH(1,1) win on TSLA?
 
-The TSLA train set (2013–2016) contains the 2014–2015 Cybertruck/Model X launch volatility spikes and the 2015 "Chinese market correction" period, during which daily RV briefly reached ~0.01 (vs. typical ~0.0005). The test set (2017) is a calmer period. Random Forest with `min_samples_leaf=1` and unbounded depth memorizes those training spikes as feature-space rules (e.g. "if `rolling_vol_5 > X` and `volume_change > Y`, predict ~0.005"). In 2017, `rolling_vol_5` occasionally brushes those thresholds from normal market noise, triggering the memorized high-volatility predictions. The result is an MSE an order of magnitude worse than the baseline.
+GARCH models two things ML has to learn from scratch: volatility clustering (past shocks predict current volatility) and mean reversion (volatility drifts toward a long-run level). TSLA in 2013–2017 has both effects pronounced — the 2014 and 2015 spike regimes are followed by explicit mean reversion toward ~0.0005 daily RV. GARCH's parametric form captures this with 3 parameters; Random Forest has to learn it from ~1000 training rows across 7+ features. On the tickers with cleaner mean reversion (AAPL, NKE), the ML models have enough data to catch up. On TSLA, the econometric prior wins.
 
-Linear Regression and XGBoost don't suffer this because: LR cannot output extreme per-row predictions without first learning they're the norm, and XGBoost's `max_depth=5` plus shrinkage (`learning_rate=0.1`) limits how sharply any single rule can fire. **A quick hyperparameter fix** for RF: `min_samples_leaf≥10` and `max_depth=8` would both attenuate this pathology — left as follow-up work.
+This is a finding worth keeping in the report: ML does not dominate classical financial econometrics here. It is competitive, beats GARCH on 2 of 3 tickers, but on the most volatile ticker GARCH still wins.
 
-### What does feature importance tell us?
+### Feature importance
 
-Across AAPL RF and XGBoost (see the feature importance plot above), the ranking is consistent:
-1. `RV` (current volatility) — dominant, as expected from volatility clustering.
-2. `rolling_vol_5` and `rolling_vol_10` — secondary signals confirming the clustering effect.
-3. `SMA_10`, `SMA_20`, `volume_change` — modest contribution.
-4. Sentiment features (`sentiment_mean`, `sentiment_mean_5d`, `news_count`, `news_count_5d`, `sentiment_std`) — lowest importance, consistent with their sparse coverage. Among sentiment features, `news_count_5d` usually ranks highest, suggesting the *volume* of recent news matters slightly more than its polarity — a finding consistent with the finance literature on attention-driven volatility.
+Across tuned RF and XGBoost on AAPL (see the feature importance plot above), the ranking is:
 
-### What would improve these results?
+1. `RV` (current volatility) — dominant (~40–60% of importance), as expected from volatility clustering.
+2. `rolling_vol_5`, `rolling_vol_10` — secondary volatility-persistence signals.
+3. `RSI_14` — modest contribution; useful as a regime indicator (oversold/overbought) even though it was designed for return prediction, not volatility.
+4. `volume_change`, `SMA_10`, `SMA_20` — low but non-zero.
+5. Sentiment features (`sentiment_mean`, `sentiment_mean_5d`, `news_count`, `news_count_5d`, `sentiment_std`) — lowest importance individually, but collectively non-negligible, and — critically — their presence changes the split choices of the other features enough to improve test MSE. Among the sentiment columns, `news_count_5d` usually ranks highest, consistent with the finance-research finding that the *volume* of news attention predicts volatility more reliably than sentiment polarity.
 
-1. **Denser news coverage.** The single biggest constraint is not the model or features but the data. NewsAPI's 30-day limit and HuffPost's tapering coverage after 2018 cap what any model can learn. A one-time purchase of a multi-year Finnhub or Reuters archive would likely convert the weak trend on AAPL into a significant lift on all three tickers.
-2. **RF hyperparameter tuning.** `min_samples_leaf=10`, `max_depth=8` would eliminate the TSLA pathology; a quick grid search would likely pull RF MSE below LR on AAPL and TSLA.
-3. **Sentiment-regime features.** A binary `has_news` indicator combined with interaction terms (e.g. `sentiment_mean × has_news`) might let tree models learn the conditional effect cleanly.
-4. **FinBERT scoring** on the headlines — financial-domain transformer would score financial news more accurately than general-purpose VADER, at the cost of ~100× inference time. Worth trying once a denser news source is in place.
+### What would improve these results further?
+
+1. **Denser news coverage.** The single biggest remaining constraint. A multi-year Finnhub or Reuters archive would likely flip TSLA from GARCH-best to ML-best by pushing sentiment coverage past 50% of trading days.
+2. **Walk-forward CV reporting.** The `walk_forward_evaluate` helper in `src/evaluate.py` runs 5-fold expanding-window evaluation and reports mean±std MSE; currently the notebook reports a single train/test split for readability. A paper-ready version would quote the walk-forward numbers.
+3. **FinBERT sentiment** scoring the same headlines — financial-domain transformer vs. general-purpose VADER — worth trying once coverage is denser.
+4. **Asymmetric features** (e.g. signed squared returns, semi-variances) — capture the leverage effect where downside moves predict more next-day volatility than upside moves of equal magnitude.
 """),
 ]
 
