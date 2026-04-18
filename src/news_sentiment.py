@@ -16,10 +16,15 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 from nltk.sentiment.vader import SentimentIntensityAnalyzer
 
-load_dotenv()
+# dotenv is optional — only needed for NewsAPI fallback. The default Kaggle
+# data path works without it, so a missing package shouldn't break the notebook.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 NEWSAPI_URL = "https://newsapi.org/v2/everything"
 # Anchor data path at the project root so calls work regardless of CWD
