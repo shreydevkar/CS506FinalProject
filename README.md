@@ -1,6 +1,6 @@
 # Predicting Next-Day Stock Volatility Using Market Data and News Sentiment
 
-
+[![CI](https://github.com/shreydevkar/CS506FinalProject/actions/workflows/ci.yml/badge.svg)](https://github.com/shreydevkar/CS506FinalProject/actions/workflows/ci.yml)
 
 ## 1. Project Description & Motivation
 
