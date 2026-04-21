@@ -4,3 +4,10 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 data/raw/news_category_dataset.json
+
+.claude/
+.claude-code/
+CLAUDE.md
+CLAUDE.local.md
+.clauderc
+
