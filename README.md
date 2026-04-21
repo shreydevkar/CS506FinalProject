@@ -51,7 +51,9 @@ Where:
 
 Squared returns are widely used as a volatility proxy because volatility measures variability, and larger price movements are emphasized.
 
+![Realized volatility over time (TSLA, 2013–2018)](figures/rv_timeseries.png)
 
+*Realized volatility for TSLA (2013–2018). Clustering is visible — high-volatility days tend to be followed by more high-volatility days, which is exactly the pattern the models exploit.*
 
 ### Prediction Target
 
@@ -249,7 +251,7 @@ python main.py --ticker TSLA --use-sentiment
 python main.py --ticker AAPL --compare     # run both variants and print a side-by-side
 ```
 
-The notebook `notebooks/preliminary_visualizations.ipynb` re-runs the pipeline for the showcase ticker and produces the comparison table, bar charts, feature-importance plots, and best-model overlay. Results CSVs are written to `notebooks/results.csv` (showcase) and `notebooks/results_all_tickers.csv` (cross-ticker).
+The notebook `notebooks/visualizations.ipynb` re-runs the pipeline for the showcase ticker and produces the comparison table, bar charts, feature-importance plots, and best-model overlay. Results CSVs are written to `notebooks/results.csv` (showcase) and `notebooks/results_all_tickers.csv` (cross-ticker).
 
 
 
@@ -264,6 +266,18 @@ Test-set MSE on the 2013–2018 window (lower is better). Models include Linear 
 | **AAPL** | Random Forest (tuned) + sentiment | **1.08e-07** | **−47%** | **−7.6%** (beats GARCH) |
 | **TSLA** | GARCH(1,1) | **7.18e-07** | **−46%** | — |
 | **NKE**  | Random Forest (tuned) + sentiment | **6.02e-07** | **−50%** | **−3.4%** (beats GARCH) |
+
+![Test MSE by model — showcase ticker](figures/mse_by_model.png)
+
+*Test-set MSE by model on the showcase ticker. All ML methods beat the persistence baseline by a wide margin; GARCH(1,1) is competitive with the tuned tree ensembles.*
+
+![Best sentiment-enhanced model vs actual](figures/best_model_vs_actual.png)
+
+*Best sentiment-enhanced model's predictions overlaid on actual next-day realized volatility on the held-out test period. The model tracks the overall volatility regime and captures several spike events, though it under-predicts extreme tails — a known limitation of squared-error objectives on heavy-tailed targets.*
+
+![Feature importance for the best tree model](figures/feature_importance.png)
+
+*Feature importance from the tuned Random Forest. `rolling_vol_5` / `rolling_vol_10` dominate — consistent with volatility clustering being the strongest signal — but sentiment features contribute non-trivial importance, which is why the "+ sentiment" variants reduce MSE in 5 of 6 tuned-tree configurations.*
 
 ### Full results (all model × variant combinations) — see `notebooks/results_all_tickers.csv`
 

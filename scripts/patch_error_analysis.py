@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-NB_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "preliminary_visualizations.ipynb"
+NB_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "visualizations.ipynb"
 OLD_MARKER = "Why does sentiment help Linear Regression on AAPL but not tree models?"
 NEW_MARKDOWN = """# [sentiment-comparison]
 ## Error Analysis & Discussion

@@ -1,4 +1,4 @@
-"""One-shot utility: append sentiment-comparison cells to the preliminary notebook.
+"""One-shot utility: append sentiment-comparison cells to the visualizations notebook.
 
 Idempotent: re-running overwrites prior sentiment cells rather than duplicating them.
 """
@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-NB_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "preliminary_visualizations.ipynb"
+NB_PATH = Path(__file__).resolve().parents[1] / "notebooks" / "visualizations.ipynb"
 SENTINEL = "# [sentiment-comparison]"
 
 
