@@ -2,6 +2,22 @@
 
 [![CI](https://github.com/shreydevkar/CS506FinalProject/actions/workflows/ci.yml/badge.svg)](https://github.com/shreydevkar/CS506FinalProject/actions/workflows/ci.yml)
 
+## Final Report Video
+
+https://youtu.be/Nzru4EUbGxg
+
+## Quickstart
+
+```bash
+make install   # install all Python dependencies (run once)
+make run       # run the pipeline on the default ticker (AAPL)
+make test      # run the pytest suite
+```
+
+For sentiment features, also download `News_Category_Dataset_v3.json` from
+https://www.kaggle.com/datasets/rmisra/news-category-dataset and save it as
+`data/raw/news_category_dataset.json` (the file is gitignored).
+
 ## 1. Project Description & Motivation
 
 Financial markets are highly sensitive to both quantitative market signals and qualitative information such as news. Traders, hedge funds, and quantitative researchers attempt to predict volatility because it is directly tied to risk management, derivative pricing, and trading strategy performance.
@@ -299,25 +315,35 @@ Test-set MSE on the 2013–2018 window (lower is better). Models include Linear 
 
 
 
-## 11. Alternative / Backup Project Idea: FitRec Gym Occupancy Prediction
+## 11. Repository Layout
 
-As a backup, I am considering a project focused on **predicting gym occupancy at FitRec (BU’s fitness center)**. Instead of simply analyzing when the gym is busy, the project would be predictive, analytical, and decision-oriented.
+```
+.
+├── main.py                       # CLI entrypoint — run the full pipeline
+├── Makefile                      # install / run / test targets
+├── requirements.txt              # Python dependencies
+├── src/
+│   ├── data_loader.py            # yfinance market data fetch + cache
+│   ├── feature_engineering.py    # technical features + sentiment merge + target
+│   ├── news_sentiment.py         # Kaggle / NewsAPI fetch + VADER scoring
+│   ├── model.py                  # Linear Regression / Random Forest / XGBoost
+│   ├── tune.py                   # time-series CV grid search for RF / XGB
+│   ├── garch_baseline.py         # GARCH(1,1) rolling forecasts
+│   └── evaluate.py               # MSE / MAE / R² + walk-forward CV + persistence baseline
+├── tests/
+│   └── test_pipeline.py          # 10 pytest tests (features, target alignment, leakage)
+├── notebooks/
+│   ├── visualizations.ipynb      # full results notebook (figures + tables)
+│   ├── results.csv               # per-model metrics, showcase ticker
+│   └── results_all_tickers.csv   # per-model metrics, all tickers
+├── figures/                      # PNGs embedded in this README
+└── data/raw/                     # cached market & news data (large files gitignored)
+```
 
-### Proposed Approach
+## 12. Testing & Continuous Integration
 
-- Build a predictive model of gym occupancy using:
-  - Temporal features (time of day, day of week)  
-  - Environmental signals (weather)  
-  - Academic signals (midterms, holidays)  
-
-- Analyze the **relative importance of contextual features** to understand what drives gym attendance.
-
-### Optional Extensions
-
-1. **Forecasting Component:** Predict tomorrow’s gym busyness using time-series models.  
-2. **Optimization Component:** Recommend the best time to go given user constraints, creating a personalized gym schedule.  
-3. **Causal Insight Questions:**
-   - Does bad weather increase indoor gym demand?  
-   - Do midterm or finals weeks spike attendance?  
-
-This backup project follows the full data science lifecycle: data collection, cleaning, feature engineering, visualization, modeling, evaluation, and optional decision-support analysis.
+- `tests/test_pipeline.py` covers feature engineering, target-column alignment (no
+  next-day leakage), RSI bounds, sentiment merge behavior, and evaluation outputs.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`) runs `pytest` on every push
+  to `main`. Build status is shown in the badge at the top of this README.
+- Run locally with `make test`.

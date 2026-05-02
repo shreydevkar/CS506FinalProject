@@ -3,11 +3,17 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+.pytest_cache/
 data/raw/news_category_dataset.json
+data/raw/News_Category_Dataset_v3.json
+notebooks/data/
 
 .claude/
 .claude-code/
 CLAUDE.md
 CLAUDE.local.md
 .clauderc
+
+presentation.html
+PRESENTATION_SCRIPT.txt
 
